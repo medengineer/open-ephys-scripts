@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 import os 
 import time
+import ast
 
 pd.set_option('display.max_rows', 40)
 
@@ -21,7 +22,7 @@ neural = {}
 aux = {}
 adc = {}
 
-fmt_str = '{:<40} {:>18} {:>30}'
+fmt_str = '{:<40} {:>18} {:>40}'
 fmt_str_len = 40 + 18 + 30 + 2  # 2 spaces between each column ?
 
 for file_name in file_list:
@@ -113,21 +114,78 @@ print(fmt_str.format('First sample index', '', str(first_sample_number)))
 print('-' * fmt_str_len)
 
 #Load events
-events = recording.events
+oe_events = recording.events
+events = oe_events.copy()
+events['sample_number'] = events['sample_number'] - first_sample_number
+events['time (s)'] = events['sample_number']/sample_rate
 print(fmt_str.format('Number of events', '', str(len(events))))
 print(fmt_str.format('First event', '', str(events.sample_number[0])))
-print(events)
+#print(events)
+
+#Load settings.xml (TODO: add this helper to python-tools)
+import xml.etree.ElementTree as ET
+
+tree = ET.parse(os.path.join(base_path, 'settings.xml'))
+root = tree.getroot()
+
+#Get channel map        
+channel_map_xml = root.findall('.//PROCESSOR[@name="Channel Map"]')[0].findall('.//CH')
+channel_order = []
+for elem in channel_map_xml:
+    channel_order.extend([int(elem.attrib['index'])])
+
+#Get cnn input channels
+cnn_input_channels = []
+
+input = root.findall('.//PROCESSOR[@name="CNN-ripple"]')[0].findall('.//PARAMETERS')[0]
+print(input)
+cnn_input_channels.extend(ast.literal_eval(input.attrib['CNN_Input'])) 
+print(fmt_str.format('CNN Input channels: ', '', str(cnn_input_channels)))
+
+head_size = 3
+tail_size = head_size
+print(fmt_str.format('Channel ordering after channel map: ', '', str(channel_order[:head_size])[:-1]+' ... '+str(channel_order[-tail_size:])[1:]))
 
 print(fmt_str.format('Elapsed time (seconds)', '', str(round(float(time.time() - start_time),2))))
 
 #Display results
-PLOT = True
-if PLOT:
-    down_sample_factor = 10000
+PLOT_ALL = False
+if PLOT_ALL:
+    down_sample_factor = 100
     samples = samples + np.arange(samples.shape[1]) * 500
-    plt.plot(samples[::down_sample_factor,:32])
+    plt.plot(samples[::down_sample_factor,cnn_input_channels])
     if events is not None:
-        [plt.axvline((event_sample_number - first_sample_number)/down_sample_factor, 
+        [plt.axvline(event_sample_number/down_sample_factor, 
                      color='b', linestyle='-', linewidth=1) for event_sample_number in events.sample_number]
     plt.axis('off')
+    plt.show()
+
+PLOT_FIRST_EVENT = False
+if PLOT_FIRST_EVENT:
+    window_size = int(sample_rate / 4)
+    event_sample_number = events.sample_number[0]
+    event_sample_number = event_sample_number - 100
+    down_sample_factor = 1
+    samples = samples + np.arange(samples.shape[1]) * 500
+    plt.plot(samples[event_sample_number-window_size:event_sample_number+window_size:down_sample_factor,cnn_input_channels])
+    plt.axis('off')
+    plt.show()
+
+N = 4
+PLOT_FIRST_N_EVENTS = True
+if PLOT_FIRST_N_EVENTS:
+    window_size_in_ms = 200
+    window_size_in_samples = int(window_size_in_ms * sample_rate / 1000)
+    down_sample_factor = 1
+    samples = samples + np.arange(samples.shape[1]) * 500
+    #Create a sublplot for each event such that the resulting figure has roughly square plots
+    num_rows = int(np.ceil(np.sqrt(N)))
+    num_cols = int(np.ceil(N/num_rows))
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
+    print(axes.shape)
+    for idx, ax in enumerate(axes.flatten()):
+        event_sample_number = events.sample_number[idx]
+        ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels])
+        ax.axvline(window_size_in_samples, color='b', linestyle='-', linewidth=1)
+        ax.axis('off')
     plt.show()
