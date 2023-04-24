@@ -138,7 +138,6 @@ for elem in channel_map_xml:
 cnn_input_channels = []
 
 input = root.findall('.//PROCESSOR[@name="CNN-ripple"]')[0].findall('.//PARAMETERS')[0]
-print(input)
 cnn_input_channels.extend(ast.literal_eval(input.attrib['CNN_Input'])) 
 print(fmt_str.format('CNN Input channels: ', '', str(cnn_input_channels)))
 
@@ -146,10 +145,25 @@ head_size = 3
 tail_size = head_size
 print(fmt_str.format('Channel ordering after channel map: ', '', str(channel_order[:head_size])[:-1]+' ... '+str(channel_order[-tail_size:])[1:]))
 
+#Load manually identified ripple events
+text_file = open(os.path.join(base_path, os.path.join('events', 'events_selected_manually.txt')), "r")
+lines = text_file.readlines()[3:]
+text_file.close()
+events_selected_manually = []
+ripple_durations = []
+for line in lines:
+    start_timestamp = float(line.split()[0])
+    stop_timestamp = float(line.split()[1])
+    event_timestamp = int((start_timestamp + stop_timestamp)/2*sample_rate)
+    ripple_durations.append(stop_timestamp - start_timestamp)
+    #print(fmt_str.format('Ripple labeled:', event_timestamp, '['+str(start_timestamp)+','+str(stop_timestamp)+']'))
+    events_selected_manually.append(event_timestamp)
+print(fmt_str.format('Number of manually labeled events: ', '', len(events_selected_manually)))
+print(fmt_str.format('Average ripple duration (ms): ', '', round(1000*np.mean(ripple_durations),2)))
+
 print(fmt_str.format('Elapsed time (seconds)', '', str(round(float(time.time() - start_time),2))))
 
-#Display results
-PLOT_ALL = False
+PLOT_ALL = True
 if PLOT_ALL:
     down_sample_factor = 100
     samples = samples + np.arange(samples.shape[1]) * 500
@@ -157,23 +171,15 @@ if PLOT_ALL:
     if events is not None:
         [plt.axvline(event_sample_number/down_sample_factor, 
                      color='b', linestyle='-', linewidth=1) for event_sample_number in events.sample_number]
+    if events_selected_manually is not None:
+        [plt.axvline(event_sample_number/down_sample_factor,
+                     color='g', linestyle='-', linewidth=1) for event_sample_number in events_selected_manually]
     plt.axis('off')
     plt.show()
 
-PLOT_FIRST_EVENT = False
-if PLOT_FIRST_EVENT:
-    window_size = int(sample_rate / 4)
-    event_sample_number = events.sample_number[0]
-    event_sample_number = event_sample_number - 100
-    down_sample_factor = 1
-    samples = samples + np.arange(samples.shape[1]) * 500
-    plt.plot(samples[event_sample_number-window_size:event_sample_number+window_size:down_sample_factor,cnn_input_channels])
-    plt.axis('off')
-    plt.show()
-
-N = 4
-PLOT_FIRST_N_EVENTS = True
-if PLOT_FIRST_N_EVENTS:
+PLOT_FIRST_N_SNAPSHOTS = False
+if PLOT_FIRST_N_SNAPSHOTS:
+    N = 24
     window_size_in_ms = 200
     window_size_in_samples = int(window_size_in_ms * sample_rate / 1000)
     down_sample_factor = 1
@@ -184,7 +190,8 @@ if PLOT_FIRST_N_EVENTS:
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
     print(axes.shape)
     for idx, ax in enumerate(axes.flatten()):
-        event_sample_number = events.sample_number[idx]
+        #event_sample_number = events.sample_number[idx]
+        event_sample_number = events_selected_manually[idx]
         ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels])
         ax.axvline(window_size_in_samples, color='b', linestyle='-', linewidth=1)
         ax.axis('off')
