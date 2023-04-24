@@ -7,8 +7,15 @@ import matplotlib.pyplot as plt
 import os 
 import time
 import ast
+import bisect
 
 pd.set_option('display.max_rows', 40)
+
+#This script aims to validate claims in paper: https://elifesciences.org/articles/77772
+# 80% of predictions were consistent with the ground truth
+
+
+duration_threshold = 100
 
 #Define base path to data
 base_path = 'E:/PridaLabData/data_recieved_3_31_2023/2023-01-27_13-19-21_Threshold0_9/Record Node 115'
@@ -115,7 +122,7 @@ print('-' * fmt_str_len)
 
 #Load events
 oe_events = recording.events
-events = oe_events.copy()
+events = oe_events.copy(deep=True)
 events['sample_number'] = events['sample_number'] - first_sample_number
 events['time (s)'] = events['sample_number']/sample_rate
 print(fmt_str.format('Number of events', '', str(len(events))))
@@ -145,6 +152,8 @@ head_size = 3
 tail_size = head_size
 print(fmt_str.format('Channel ordering after channel map: ', '', str(channel_order[:head_size])[:-1]+' ... '+str(channel_order[-tail_size:])[1:]))
 
+print(fmt_str.format('Number of detected events: ', '', str(len(events))))
+
 #Load manually identified ripple events
 text_file = open(os.path.join(base_path, os.path.join('events', 'events_selected_manually.txt')), "r")
 lines = text_file.readlines()[3:]
@@ -152,46 +161,90 @@ text_file.close()
 events_selected_manually = []
 ripple_durations = []
 for line in lines:
+    #The start of the event is defined near the first ripple or the sharp-wave onset
     start_timestamp = float(line.split()[0])
+    #The end of the event is defined at the latest ripple or when sharp-wave resumed.
     stop_timestamp = float(line.split()[1])
     event_timestamp = int((start_timestamp + stop_timestamp)/2*sample_rate)
-    ripple_durations.append(stop_timestamp - start_timestamp)
+    ripple_durations.append((stop_timestamp - start_timestamp))
     #print(fmt_str.format('Ripple labeled:', event_timestamp, '['+str(start_timestamp)+','+str(stop_timestamp)+']'))
-    events_selected_manually.append(event_timestamp)
+    events_selected_manually.append((start_timestamp, stop_timestamp))
 print(fmt_str.format('Number of manually labeled events: ', '', len(events_selected_manually)))
-print(fmt_str.format('Average ripple duration (ms): ', '', round(1000*np.mean(ripple_durations),2)))
 
+#Calculate average ripple duration
+mean_ripple_duration_ms = 1000*np.mean(ripple_durations)
+print(fmt_str.format('Average ripple duration (ms): ', '', round(mean_ripple_duration_ms,2)))
+
+#Compare events to manually labeled events
+
+#Find events that are stricly contained within a manually labeled event
+def find_contained_timestamps(ground_truth, predicted):
+    ground_truth = sorted(ground_truth, key=lambda x: x[0], reverse=False)
+    contained_timestamps = []
+
+    for pred_time in predicted:
+        for bounds in ground_truth:
+            if pred_time >= bounds[0] and pred_time <= bounds[1]:
+                contained_timestamps.append(pred_time)
+                break
+
+    return contained_timestamps
+
+#Find events that precede the start of a manually labeled event within n_milliseconds
+def find_preceding_timestamps(ground_truth, predicted, n_milliseconds):
+    ground_truth = sorted(ground_truth, key=lambda x: x[0], reverse=False)
+    preceding_timestamps = []
+
+    for pred_time in predicted:
+        for bounds in ground_truth:
+            if pred_time >= bounds[0] - n_milliseconds / 1000 and pred_time < bounds[0]:
+                preceding_timestamps.append(pred_time)
+                break
+
+    return preceding_timestamps
+
+detected_events_within_manual_events = find_contained_timestamps(events_selected_manually, events.sample_number/sample_rate)
+print(fmt_str.format('Events inside labeled bounds: ', '', str(len(detected_events_within_manual_events))))
+pred_threshold = 200
+detected_events_within_pred_threshold = find_preceding_timestamps(events_selected_manually, events.sample_number/sample_rate, pred_threshold)
+print(fmt_str.format('Events '+str(pred_threshold)+' ms before labeled bounds: ', '', str(len(detected_events_within_pred_threshold))))
 print(fmt_str.format('Elapsed time (seconds)', '', str(round(float(time.time() - start_time),2))))
 
 PLOT_ALL = True
 if PLOT_ALL:
-    down_sample_factor = 100
+    down_sample_factor = 10000
     samples = samples + np.arange(samples.shape[1]) * 500
-    plt.plot(samples[::down_sample_factor,cnn_input_channels])
+    plt.plot(samples[::down_sample_factor,cnn_input_channels],color='0.5')
     if events is not None:
         [plt.axvline(event_sample_number/down_sample_factor, 
                      color='b', linestyle='-', linewidth=1) for event_sample_number in events.sample_number]
     if events_selected_manually is not None:
-        [plt.axvline(event_sample_number/down_sample_factor,
-                     color='g', linestyle='-', linewidth=1) for event_sample_number in events_selected_manually]
+        [plt.axvline(int(event_sample_number/down_sample_factor),
+                     color='r', linestyle='-', linewidth=1) for event_sample_number in [ int(np.mean([a,b])*sample_rate) for a,b in events_selected_manually]]
+    if detected_events_within_manual_events is not None:
+        [plt.axvline(int(sample_rate*event_sample_number)/down_sample_factor,
+                     color='g', linestyle='-', linewidth=1) for event_sample_number in detected_events_within_manual_events]
+    if detected_events_within_pred_threshold is not None:
+        [plt.axvline(int(sample_rate*event_sample_number)/down_sample_factor,
+                     color='g', linestyle='-', linewidth=1) for event_sample_number in detected_events_within_pred_threshold]
     plt.axis('off')
     plt.show()
 
 PLOT_FIRST_N_SNAPSHOTS = False
 if PLOT_FIRST_N_SNAPSHOTS:
-    N = 24
-    window_size_in_ms = 200
-    window_size_in_samples = int(window_size_in_ms * sample_rate / 1000)
+    N = 2
+    window_size_in_ms = 500
+    window_size_in_samples = int(window_size_in_ms * sample_rate / 1000 / 2)
     down_sample_factor = 1
     samples = samples + np.arange(samples.shape[1]) * 500
     #Create a sublplot for each event such that the resulting figure has roughly square plots
     num_rows = int(np.ceil(np.sqrt(N)))
     num_cols = int(np.ceil(N/num_rows))
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
-    print(axes.shape)
     for idx, ax in enumerate(axes.flatten()):
         #event_sample_number = events.sample_number[idx]
-        event_sample_number = events_selected_manually[idx]
+        #event_sample_number = events_selected_manually[idx]
+        event_sample_number = int(sample_rate*detected_events_within_manual_events[idx])
         ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels])
         ax.axvline(window_size_in_samples, color='b', linestyle='-', linewidth=1)
         ax.axis('off')
