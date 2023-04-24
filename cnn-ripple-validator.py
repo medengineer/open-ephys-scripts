@@ -30,7 +30,7 @@ aux = {}
 adc = {}
 
 fmt_str = '{:<40} {:>18} {:>40}'
-fmt_str_len = 40 + 18 + 30 + 2  # 2 spaces between each column ?
+fmt_str_len = 40 + 18 + 40 + 2  # 2 spaces between each column ?
 
 for file_name in file_list:
     file_size = os.path.getsize(os.path.join(base_path, file_name))
@@ -48,16 +48,16 @@ for file_name in file_list:
 print('-' * fmt_str_len)
 
 #Print total size of continuous files
-print(fmt_str.format('Total size of continuous files ', '', sum(continuous.values())))
+#print(fmt_str.format('Total size of continuous files ', '', sum(continuous.values())))
 
 #Get size of .dat file
 dat_file = os.path.join(base_path, 'ephys.dat')
 
 #Print size of .dat file
-print(fmt_str.format('Size of .dat file ', '', os.path.getsize(dat_file)))
+#print(fmt_str.format('Size of .dat file ', '', os.path.getsize(dat_file)))
 
 #Missing bytes
-print(fmt_str.format('Non data bytes ', '',  sum(continuous.values()) - os.path.getsize(dat_file)))
+#print(fmt_str.format('Non data bytes ', '',  sum(continuous.values()) - os.path.getsize(dat_file)))
 
 num_channels = len(continuous.keys())
 #Load .dat file
@@ -65,14 +65,14 @@ data = np.memmap(os.path.join(base_path, 'ephys.dat'), mode='r', dtype='int16')
 samples = data.reshape((len(data) // num_channels, num_channels))
 
 samples_per_chan = int(samples.size/num_channels)
-print(fmt_str.format('.dat shape:', '', '('+str(samples_per_chan)+','+str(num_channels)+')'))
+#print(fmt_str.format('.dat shape:', '', '('+str(samples_per_chan)+','+str(num_channels)+')'))
 
 #Print count of each file type
-print(fmt_str.format('Total number of neural files', 'neural', len(neural.keys())))
-print(fmt_str.format('Total number of aux files', 'aux', len(aux.keys())))
-print(fmt_str.format('Total number of adc files', 'adc', len(adc.keys())))
+#print(fmt_str.format('Total number of neural files', 'neural', len(neural.keys())))
+#print(fmt_str.format('Total number of aux files', 'aux', len(aux.keys())))
+#print(fmt_str.format('Total number of adc files', 'adc', len(adc.keys())))
 
-print('-' * fmt_str_len)
+#print('-' * fmt_str_len)
 
 #Load as open ephys object
 
@@ -88,9 +88,6 @@ print(fmt_str.format('Total number of recordings', '', str(len(record_node.recor
 #print sample rate
 print(fmt_str.format('Sample rate', '', str(record_node.recordings[0].continuous[0].metadata['sample_rate'])))
 
-#print sample range
-print(fmt_str.format('Sample range', '', str(record_node.recordings[0].continuous[0].sample_range)))
-
 recording = record_node.recordings[0]
 
 #Too slow takes 100 seconds to load the whole 0.82GB file
@@ -102,7 +99,7 @@ recording_time = float(samples_per_chan/recording.continuous[0].metadata['sample
 print(fmt_str.format('Total recording time (seconds)', '', str(round(recording_time,2))))
 
 #Print total recording time in minutes
-print(fmt_str.format('Total recording time (minutes)', '', str(round(recording_time/60,2))))
+#print(fmt_str.format('Total recording time (minutes)', '', str(round(recording_time/60,2))))
 
 
 #Load the first 30 seconds of data
@@ -116,7 +113,7 @@ first_timestamp = recording.continuous[0].timestamps[0]
 print(fmt_str.format('First timestamp', '', str(first_timestamp)))
 
 first_sample_number = recording.continuous[0].sample_numbers[0]
-print(fmt_str.format('First sample index', '', str(first_sample_number)))
+#print(fmt_str.format('First sample index', '', str(first_sample_number)))
 
 print('-' * fmt_str_len)
 
@@ -180,12 +177,12 @@ print(fmt_str.format('Average ripple duration (ms): ', '', round(mean_ripple_dur
 #Find events that are stricly contained within a manually labeled event
 def find_contained_timestamps(ground_truth, predicted):
     ground_truth = sorted(ground_truth, key=lambda x: x[0], reverse=False)
-    contained_timestamps = []
+    contained_timestamps = {}
 
     for pred_time in predicted:
         for bounds in ground_truth:
             if pred_time >= bounds[0] and pred_time <= bounds[1]:
-                contained_timestamps.append(pred_time)
+                contained_timestamps[pred_time] = bounds
                 break
 
     return contained_timestamps
@@ -204,14 +201,17 @@ def find_preceding_timestamps(ground_truth, predicted, n_milliseconds):
     return preceding_timestamps
 
 detected_events_within_manual_events = find_contained_timestamps(events_selected_manually, events.sample_number/sample_rate)
-print(fmt_str.format('Events inside labeled bounds: ', '', str(len(detected_events_within_manual_events))))
+print(fmt_str.format('Events inside labeled bounds: ', '', str(len(detected_events_within_manual_events.keys()))))
 pred_threshold = 200
 detected_events_within_pred_threshold = find_preceding_timestamps(events_selected_manually, events.sample_number/sample_rate, pred_threshold)
 print(fmt_str.format('Events '+str(pred_threshold)+' ms before labeled bounds: ', '', str(len(detected_events_within_pred_threshold))))
+
+print(fmt_str.format('True positive rate: ', '', str(round(len(detected_events_within_manual_events.keys())/len(events_selected_manually),2))))
+print(fmt_str.format('False positive rate: ', '', str(round(1-len(detected_events_within_manual_events.keys())/len(events_selected_manually),2))))
 print(fmt_str.format('Elapsed time (seconds)', '', str(round(float(time.time() - start_time),2))))
 
-PLOT_ALL = True
-if PLOT_ALL:
+PLOT_SUMMARY = False
+if PLOT_SUMMARY:
     down_sample_factor = 10000
     samples = samples + np.arange(samples.shape[1]) * 500
     plt.plot(samples[::down_sample_factor,cnn_input_channels],color='0.5')
@@ -230,22 +230,45 @@ if PLOT_ALL:
     plt.axis('off')
     plt.show()
 
-PLOT_FIRST_N_SNAPSHOTS = False
-if PLOT_FIRST_N_SNAPSHOTS:
-    N = 2
-    window_size_in_ms = 500
+PLOT_FIRST_N_GROUND_TRUTH = False
+if PLOT_FIRST_N_GROUND_TRUTH:
+    N = 16
+    window_size_in_ms = 150
     window_size_in_samples = int(window_size_in_ms * sample_rate / 1000 / 2)
     down_sample_factor = 1
-    samples = samples + np.arange(samples.shape[1]) * 500
+    samples = samples + np.arange(samples.shape[1]) * 150
     #Create a sublplot for each event such that the resulting figure has roughly square plots
     num_rows = int(np.ceil(np.sqrt(N)))
     num_cols = int(np.ceil(N/num_rows))
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
+    gt_events = events_selected_manually
     for idx, ax in enumerate(axes.flatten()):
-        #event_sample_number = events.sample_number[idx]
-        #event_sample_number = events_selected_manually[idx]
-        event_sample_number = int(sample_rate*detected_events_within_manual_events[idx])
-        ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels])
-        ax.axvline(window_size_in_samples, color='b', linestyle='-', linewidth=1)
+        event_sample_number = int(sample_rate*np.mean(gt_events[idx]))
+        ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='royalblue')
+        x1 = int((gt_events[idx][0] - event_sample_number/sample_rate) * sample_rate / down_sample_factor) + window_size_in_samples
+        x2 = int((gt_events[idx][1] - event_sample_number/sample_rate) * sample_rate / down_sample_factor) + window_size_in_samples
+        ax.axvspan(x1, x2, facecolor='lightgray', alpha=0.5)
+        ax.axis('off')
+    plt.show()
+
+PLOT_FIRST_N_GROUND_TRUTH_AND_DETECTED = True
+if PLOT_FIRST_N_GROUND_TRUTH_AND_DETECTED:
+    N = 32
+    window_size_in_ms = 120
+    window_size_in_samples = int(window_size_in_ms * sample_rate / 1000 / 2)
+    down_sample_factor = 1
+    samples = samples + np.arange(samples.shape[1]) * 300
+    #Create a sublplot for each event such that the resulting figure has roughly square plots
+    num_rows = int(np.ceil(np.sqrt(N)))
+    num_cols = int(np.ceil(N/num_rows))
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
+    gt_events = list(detected_events_within_manual_events.keys())
+    for idx, ax in enumerate(axes.flatten()):
+        event_sample_number = int(sample_rate*gt_events[idx])
+        ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='royalblue')
+        ax.axvline(window_size_in_samples, color='k', linestyle='-', linewidth=2)
+        x1 = int((detected_events_within_manual_events[gt_events[idx]][0] - event_sample_number/sample_rate) * sample_rate / down_sample_factor) + window_size_in_samples
+        x2 = int((detected_events_within_manual_events[gt_events[idx]][1] - event_sample_number/sample_rate) * sample_rate / down_sample_factor) + window_size_in_samples
+        ax.axvspan(x1, x2, facecolor='lightgray', alpha=0.5)
         ax.axis('off')
     plt.show()
