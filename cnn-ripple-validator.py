@@ -25,11 +25,15 @@ def run(params):
 
     duration_threshold = 100
 
-    base_path = 'E:/PridaLabData/data_recieved_3_31_2023'
+    prida_path = 'E:/PridaLabData/data_recieved_3_31_2023'
+    local_path = 'D:/test-suite/ripples'
+
     data_sets = [
-        os.path.join(base_path, '2023-01-27_13-19-21_Threshold0_9/Record Node 115'),
-        os.path.join(base_path, '2023-01-27_13-29-15_Threshold0_9/Record Node 115'),
-        os.path.join(base_path, '2023-01-27_13-11-25_Threshold0_8/Record Node 115')
+        os.path.join(prida_path, '2023-01-27_13-19-21_Threshold0_9/Record Node 115'), #dataset 1
+        #os.path.join(prida_path, '2023-01-27_13-29-15_Threshold0_9/Record Node 115'), #dataset 2
+        #os.path.join(prida_path, '2023-01-27_13-11-25_Threshold0_8/Record Node 115'), #dataset 3
+
+        os.path.join(local_path, '2023-04-30_23-48-28/Record Node 104'), #dataset 4
     ]
 
     count = 0
@@ -67,8 +71,11 @@ def run(params):
 
         num_channels = len(continuous.keys()) if len(continuous.keys()) > 0 else 43
 
-        data = np.memmap(os.path.join(data_path, 'ephys.dat'), mode='r', dtype='int16')
-        samples = data.reshape((len(data) // num_channels, num_channels))
+        if 'PridaLabData' in data_path:
+            data = np.memmap(os.path.join(data_path, 'ephys.dat'), mode='r', dtype='int16')
+            samples = data.reshape((len(data) // num_channels, num_channels))
+        else:
+            samples = analysis.Session(os.path.dirname(data_path)).recordnodes[0].recordings[0].continuous[0].samples
 
         samples_per_chan = int(samples.size/num_channels)
 
@@ -98,7 +105,7 @@ def run(params):
         # TODO: Way slower than loading .dat file directly, why?
         #data = recording.continuous[0].get_samples(start_sample_index=0, end_sample_index=end_sample_index)
 
-        if len(continuous.keys()) > 0:
+        if len(continuous.keys()) > 0 or 'PridaLab' not in data_path:
             first_sample_number = recording.continuous[0].sample_numbers[0]
             first_timestamp = recording.continuous[0].timestamps[0]
         else:
@@ -115,50 +122,65 @@ def run(params):
         events = oe_events.copy(deep=True)
         events['sample_number'] = events['sample_number'] - first_sample_number
         events['time (s)'] = events['sample_number']/sample_rate
+        print(events)
         #results.setdefault('First event',[]).append(events.sample_number[0])
 
-        #Load settings from settings.xml (TODO: add this helper to python-tools)
-        import xml.etree.ElementTree as ET
+        if 'PridaLab' in data_path:
 
-        tree = ET.parse(os.path.join(data_path, 'settings.xml'))
-        root = tree.getroot()
-    
-        channel_map_xml = root.findall('.//PROCESSOR[@name="Channel Map"]')[0].findall('.//CH')
-        channel_order = []
-        for elem in channel_map_xml:
-            channel_order.extend([int(elem.attrib['index'])])
-        head_size = 3
-        tail_size = head_size
-        results.setdefault('Channel ordering after channel map',[]).append(str(channel_order[:head_size])[:-1]+' ... '+str(channel_order[-tail_size:])[1:])
+            #Load settings from settings.xml (TODO: add this helper to python-tools)
+            import xml.etree.ElementTree as ET
 
-        cnn_input_channels = []
+            tree = ET.parse(os.path.join(data_path, 'settings.xml'))
+            root = tree.getroot()
 
-        input = root.findall('.//PROCESSOR[@name="CNN-ripple"]')[0].findall('.//PARAMETERS')[0]
-        cnn_input_channels.extend(ast.literal_eval(input.attrib['CNN_Input'])) 
-        results.setdefault('CNN Input channels',[]).append(str(cnn_input_channels))
+            channel_map_xml = root.findall('.//PROCESSOR[@name="Channel Map"]')[0].findall('.//CH')
+            channel_order = []
+            for elem in channel_map_xml:
+                channel_order.extend([int(elem.attrib['index'])])
+            head_size = 3
+            tail_size = head_size
+            results.setdefault('Channel ordering after channel map',[]).append(str(channel_order[:head_size])[:-1]+' ... '+str(channel_order[-tail_size:])[1:])
+
+            cnn_input_channels = []
+
+            input = root.findall('.//PROCESSOR[@name="CNN-ripple"]')[0].findall('.//PARAMETERS')[0]
+            cnn_input_channels.extend(ast.literal_eval(input.attrib['CNN_Input'])) 
+            results.setdefault('CNN Input channels',[]).append(str(cnn_input_channels))
+
+        else:
+
+            results.setdefault('Channel ordering after channel map',[]).append('same')
+            results.setdefault('CNN Input channels',[]).append('same')
 
         results.setdefault('Number of detected events',[]).append(len(events))
 
-        #Load manually identified ripple events
-        text_file = open(os.path.join(data_path, os.path.join('events', 'events_selected_manually.txt')), "r")
-        lines = text_file.readlines()[3:]
-        text_file.close()
-        events_selected_manually = []
-        ripple_durations = []
-        for line in lines:
-            #The start of the event is defined near the first ripple or the sharp-wave onset
-            start_timestamp = float(line.split()[0])
-            #The end of the event is defined at the latest ripple or when sharp-wave resumed.
-            stop_timestamp = float(line.split()[1])
-            event_timestamp = int((start_timestamp + stop_timestamp)/2*sample_rate)
-            ripple_durations.append((stop_timestamp - start_timestamp))
-            #print(fmt_str.format('Ripple labeled:', event_timestamp, '['+str(start_timestamp)+','+str(stop_timestamp)+']'))
-            events_selected_manually.append((start_timestamp, stop_timestamp))
-        results.setdefault('Number of manually labeled events',[]).append(len(events_selected_manually))
+        if 'PridaLab' in data_path:
+            #Load manually identified ripple events
+            text_file = open(os.path.join(data_path, os.path.join('events', 'events_selected_manually.txt')), "r")
+            lines = text_file.readlines()[3:]
+            text_file.close()
+            events_selected_manually = []
+            ripple_durations = []
+            for line in lines:
+                #The start of the event is defined near the first ripple or the sharp-wave onset
+                start_timestamp = float(line.split()[0])
+                #The end of the event is defined at the latest ripple or when sharp-wave resumed.
+                stop_timestamp = float(line.split()[1])
+                event_timestamp = int((start_timestamp + stop_timestamp)/2*sample_rate)
+                ripple_durations.append((stop_timestamp - start_timestamp))
+                #print(fmt_str.format('Ripple labeled:', event_timestamp, '['+str(start_timestamp)+','+str(stop_timestamp)+']'))
+                events_selected_manually.append((start_timestamp, stop_timestamp))
+            results.setdefault('Number of manually labeled events',[]).append(len(events_selected_manually))
 
-        #Calculate average ripple duration
-        mean_ripple_duration_ms = 1000*np.mean(ripple_durations)
-        results.setdefault('Average ripple duration (ms)',[]).append(round(mean_ripple_duration_ms,2))
+            #Calculate average ripple duration
+            mean_ripple_duration_ms = 1000*np.mean(ripple_durations)
+            results.setdefault('Average ripple duration (ms)',[]).append(round(mean_ripple_duration_ms,2))
+
+        else:
+
+            results.setdefault('Number of manually labeled events',[]).append(len(events_selected_manually))
+            results.setdefault('Average ripple duration (ms)',[]).append(round(mean_ripple_duration_ms,2))
+
 
         #Compare events to manually labeled events
 
@@ -251,10 +273,10 @@ def run(params):
 
             if PLOT_FIRST_N_GROUND_TRUTH:
                 N = 16
-                window_size_in_ms = 150
+                window_size_in_ms = 220
                 window_size_in_samples = int(window_size_in_ms * sample_rate / 1000 / 2)
                 down_sample_factor = 1
-                samples = samples + np.arange(samples.shape[1]) * 150
+                samples = samples + np.arange(samples.shape[1]) #* 400
                 #Create a sublplot for each event such that the resulting figure has roughly square plots
                 num_rows = int(np.ceil(np.sqrt(N)))
                 num_cols = int(np.ceil(N/num_rows))
@@ -267,6 +289,7 @@ def run(params):
                     x2 = int((gt_events[idx][1] - event_sample_number/sample_rate) * sample_rate / down_sample_factor) + window_size_in_samples
                     ax.axvspan(x1, x2, facecolor='lightgray', alpha=0.5)
                     ax.axis('off')
+                    ax.title.set_text(round(event_sample_number/sample_rate,2))
                 plt.show()
 
             if PLOT_FIRST_N_TRUE_POSITIVE:
@@ -288,11 +311,11 @@ def run(params):
                     x2 = int((detected_events_within_manual_events[gt_events[idx]][1] - event_sample_number/sample_rate) * sample_rate / down_sample_factor) + window_size_in_samples
                     ax.axvspan(x1, x2, facecolor='lightgray', alpha=0.5)
                     ax.axis('off')
-                    ax.set_title(str(idx))
+                    ax.title.set_text(round(event_sample_number/sample_rate,2))
                 plt.show()
 
             if PLOT_FIRST_N_FALSE_POSITIVE:
-                N = 32
+                N = 8
                 down_sample_factor = 1
                 window_size_in_ms = 120 / down_sample_factor
                 window_size_in_samples = int(window_size_in_ms * sample_rate / 1000 / 2)
@@ -307,7 +330,7 @@ def run(params):
                     ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='royalblue')
                     ax.axvline(window_size_in_samples, color='k', linestyle='-', linewidth=2)
                     ax.axis('off')
-                    ax.set_title(str(idx))
+                    ax.title.set_text(round(event_sample_number/sample_rate,2))
                 plt.show()
 
             if PLOT_TRUE_VS_FALSE_POSITIVE:
@@ -322,7 +345,9 @@ def run(params):
                 fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
                 gt_events = list(detected_events_within_manual_events.keys())
                 true_positives = list(detected_events_within_manual_events.keys())
+                print(true_positives)
                 false_positives = list(detected_events_not_within_manual_events.keys())
+                print(false_positives)
                 for idx, ax in enumerate(axes.flatten()):
                     if idx < N / 2:
                         event_sample_number = int(sample_rate*true_positives[idx])
@@ -331,6 +356,7 @@ def run(params):
                         event_sample_number = int(sample_rate*false_positives[int(idx - N / 2)])
                         ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='red')
                     ax.axvline(window_size_in_samples, color='grey', linestyle='-', linewidth=1)
+                    ax.title.set_text(round(event_sample_number/sample_rate,2))
                     ax.axis('off')
                 plt.show()
 
@@ -347,7 +373,7 @@ if __name__ == '__main__':
     results = run(params)
 
     fmt = '{:<40} ' + '{:>40}' * params['count']
-    print(fmt.format('DESCRIPTION', 'DATASET 1', 'DATASET 2', 'DATASET 3'))
+    print(fmt.format('DESCRIPTION', 'PRIDA LAB', 'OPEN EPHYS'))
     print('-'*(40*(params['count'] + 1) + params['count']))
     for key, val in results.items():
         print(fmt.format(key, *val))
