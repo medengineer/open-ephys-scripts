@@ -15,7 +15,9 @@ import bisect
 
 PLOT_SUMMARY                            = False
 PLOT_FIRST_N_GROUND_TRUTH               = False
-PLOT_FIRST_N_GROUND_TRUTH_AND_DETECTED  = True
+PLOT_FIRST_N_TRUE_POSITIVE              = False
+PLOT_FIRST_N_FALSE_POSITIVE             = False
+PLOT_TRUE_VS_FALSE_POSITIVE             = True
 
 def run(params):
 
@@ -30,9 +32,14 @@ def run(params):
         os.path.join(base_path, '2023-01-27_13-11-25_Threshold0_8/Record Node 115')
     ]
 
-    data_path = data_sets[0]
+    count = 0
 
     for data_path in data_sets:
+
+        if count > params['count']:
+            break
+
+        count += 1
 
         file_list = os.listdir(data_path)
 
@@ -171,36 +178,54 @@ def run(params):
         #Find events that precede the start of a manually labeled event within n_milliseconds
         def find_preceding_timestamps(ground_truth, predicted, n_milliseconds):
             ground_truth = sorted(ground_truth, key=lambda x: x[0], reverse=False)
-            preceding_timestamps = []
+            preceding_timestamps = {}
 
             for pred_time in predicted:
                 for bounds in ground_truth:
                     if pred_time >= bounds[0] - n_milliseconds / 1000 and pred_time < bounds[0]:
-                        preceding_timestamps.append(pred_time)
+                        preceding_timestamps[pred_time] = bounds
                         break
 
             return preceding_timestamps
 
+        #Find false positive events
+        def find_false_positive_timestamps(ground_truth, predicted):
+            ground_truth.sort(key=lambda x: x[0])
+            ground_truth_start_times = [bounds[0] for bounds in ground_truth]
+            false_positive_timestamps = {}
+
+            for pred_time in predicted:
+                index = bisect.bisect_left(ground_truth_start_times, pred_time)
+                # If the index is 0, the predicted time is not within any interval
+                if index == 0:
+                    false_positive_timestamps[pred_time] = 1
+                else:
+                    previous_interval = ground_truth[index - 1]
+                    if pred_time > previous_interval[1]:  # pred_time is not in the previous interval
+                        false_positive_timestamps[pred_time] = 1
+
+            return false_positive_timestamps
+
         detected_events_within_manual_events = find_contained_timestamps(events_selected_manually, events.sample_number/sample_rate)
         results.setdefault('Events inside labeled bounds',[]).append(len(detected_events_within_manual_events.keys()))
 
-        #pred_threshold = mean_ripple_duration_ms
-        #detected_events_within_pred_threshold = find_preceding_timestamps(events_selected_manually, events.sample_number/sample_rate, pred_threshold)
-        #results.setdefault('Events '+str(pred_threshold)+' ms before labeled bounds',[]).append(len(detected_events_within_pred_threshold))
+        detected_events_not_within_manual_events = find_false_positive_timestamps(events_selected_manually, events.sample_number/sample_rate)
+        results.setdefault('Events outside labeled bounds',[]).append(len(detected_events_not_within_manual_events.keys()))
+
+        pred_threshold = mean_ripple_duration_ms
+        detected_events_within_pred_threshold = find_preceding_timestamps(events_selected_manually, events.sample_number/sample_rate, pred_threshold)
+        results.setdefault('Predict windows (in ms)',[]).append(round(pred_threshold,1))
+        results.setdefault('Events detected within predict window:',[]).append(len(detected_events_within_pred_threshold.keys()))
         
         #Types of events:
         #sharp waves without clear associated ripples (SW no ripples)
         #ripples without associated sharp waves (ripples no SW),
 
         #True positives: events that are stricly contained within a manually labeled event
-        true_postives = len(detected_events_within_manual_events.keys())
         #False positives: events that are not stricly contained within a manually labeled event nor precede the start of a manually labeled event within n_milliseconds
-        false_positives = len(events) - true_postives
-        #False negatives: manually labeled events that do not contain any detected event                        
-        #True negatives: not applicable
 
-        results.setdefault('True positives',[]).append(true_postives)
-        results.setdefault('False positives',[]).append(false_positives)
+        results.setdefault('True positives',[]).append(len(detected_events_within_manual_events.keys()))
+        results.setdefault('False positives',[]).append(len(detected_events_not_within_manual_events.keys()))
         results.setdefault('Elapsed time (seconds)',[]).append(round(float(time.time() - start_time),2))
 
         PLOT = params['show']
@@ -244,7 +269,7 @@ def run(params):
                     ax.axis('off')
                 plt.show()
 
-            if PLOT_FIRST_N_GROUND_TRUTH_AND_DETECTED:
+            if PLOT_FIRST_N_TRUE_POSITIVE:
                 N = 32
                 down_sample_factor = 1
                 window_size_in_ms = 120 / down_sample_factor
@@ -266,20 +291,63 @@ def run(params):
                     ax.set_title(str(idx))
                 plt.show()
 
+            if PLOT_FIRST_N_FALSE_POSITIVE:
+                N = 32
+                down_sample_factor = 1
+                window_size_in_ms = 120 / down_sample_factor
+                window_size_in_samples = int(window_size_in_ms * sample_rate / 1000 / 2)
+                samples = samples + np.arange(samples.shape[1]) * 300
+                #Create a sublplot for each event such that the resulting figure has roughly square plots
+                num_rows = int(np.ceil(np.sqrt(N)))
+                num_cols = int(np.ceil(N/num_rows))
+                fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
+                false_positives = list(detected_events_not_within_manual_events.keys())
+                for idx, ax in enumerate(axes.flatten()):
+                    event_sample_number = int(sample_rate*false_positives[idx])
+                    ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='royalblue')
+                    ax.axvline(window_size_in_samples, color='k', linestyle='-', linewidth=2)
+                    ax.axis('off')
+                    ax.set_title(str(idx))
+                plt.show()
+
+            if PLOT_TRUE_VS_FALSE_POSITIVE:
+                N = 16
+                down_sample_factor = 1
+                window_size_in_ms = 120 / down_sample_factor
+                window_size_in_samples = int(window_size_in_ms * sample_rate / 1000 / 2)
+                samples = samples + np.arange(samples.shape[1]) * 300
+                #Create a sublplot for each event such that the resulting figure has roughly square plots
+                num_rows = int(np.ceil(np.sqrt(N)))
+                num_cols = int(np.ceil(N/num_rows))
+                fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
+                gt_events = list(detected_events_within_manual_events.keys())
+                true_positives = list(detected_events_within_manual_events.keys())
+                false_positives = list(detected_events_not_within_manual_events.keys())
+                for idx, ax in enumerate(axes.flatten()):
+                    if idx < N / 2:
+                        event_sample_number = int(sample_rate*true_positives[idx])
+                        ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='royalblue')
+                    else:
+                        event_sample_number = int(sample_rate*false_positives[int(idx - N / 2)])
+                        ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='red')
+                    ax.axvline(window_size_in_samples, color='grey', linestyle='-', linewidth=1)
+                    ax.axis('off')
+                plt.show()
+
     return results
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Validate CNN-based ripple detection')
     parser.add_argument('--show', required=False, type=int, default=0)
+    parser.add_argument('--count', required=False, type=int, default=3)
 
     params = vars(parser.parse_args(sys.argv[1:]))
 
     results = run(params)
 
-    fmt_str = '{:<40} {:>40} {:>40} {:>40}'
-    print(fmt_str.format('DESCRIPTION', 'DATASET 1', 'DATASET 2', 'DATASET 3'))
-    print('-'*(40*4 + 3))
+    fmt = '{:<40} ' + '{:>40}' * params['count']
+    print(fmt.format('DESCRIPTION', 'DATASET 1', 'DATASET 2', 'DATASET 3'))
+    print('-'*(40*(params['count'] + 1) + params['count']))
     for key, val in results.items():
-        print(fmt_str.format(key, val[0], val[1], val[2]))
-        #rint('.'*(40*4 + 3))
+        print(fmt.format(key, *val))
