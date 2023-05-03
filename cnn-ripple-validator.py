@@ -17,44 +17,42 @@ import bisect
 
 PLOT_SUMMARY                            = False
 PLOT_FIRST_N_GROUND_TRUTH               = False
-PLOT_FIRST_N_TRUE_POSITIVE              = False
-PLOT_FIRST_N_FALSE_POSITIVE             = True
+PLOT_FIRST_N_TRUE_POSITIVE              = True
+PLOT_FIRST_N_FALSE_POSITIVE             = False
 PLOT_TRUE_VS_FALSE_POSITIVE             = False
 
 #Find all detected ripple events that are stricly contained within bounds of a manually labeled event
 def find_contained_timestamps(ground_truth, detected):
-    ground_truth = sorted(ground_truth, key=lambda x: x[0], reverse=False)
-    contained_timestamps = {}
-    for detect_time in detected:
-        for bounds in ground_truth:
-            if detect_time >= bounds[0] and detect_time <= bounds[1]:
-                contained_timestamps[detect_time] = bounds
-                break
+    ground_truth = sorted(ground_truth, key=lambda x: x[0])
+
+    def find_containing_bounds(detect_time):
+        return next((bounds for bounds in ground_truth if bounds[0] <= detect_time <= bounds[1]), None)
+    
+    contained_timestamps = {detect_time: bounds for detect_time in detected if (bounds := find_containing_bounds(detect_time)) is not None}
+
     return contained_timestamps
 
 #Find all detected ripple events that precede the start of a manually labeled bounds within n_milliseconds
 def find_preceding_timestamps(ground_truth, detected, n_milliseconds):
-    ground_truth = sorted(ground_truth, key=lambda x: x[0], reverse=False)
-    preceding_timestamps = {}
-    for detect_time in detected:
-        for bounds in ground_truth:
-            if detect_time >= bounds[0] - n_milliseconds / 1000 and detect_time < bounds[0]:
-                preceding_timestamps[detect_time] = bounds
-                break
+    ground_truth = sorted(ground_truth, key=lambda x: x[0])
+
+    def find_preceding_bounds(detect_time):
+        return next((bounds for bounds in ground_truth if bounds[0] - n_milliseconds / 1000 <= detect_time < bounds[0]), None)
+    
+    preceding_timestamps = {detect_time: bounds for detect_time in detected if (bounds := find_preceding_bounds(detect_time)) is not None}
+
     return preceding_timestamps
+
 
 #Find all false positive events 
 def find_false_positive_timestamps(ground_truth, detected):
-    ground_truth = sorted(ground_truth, key=lambda x: x[0], reverse=False)
-    false_positive_timestamps = {}
-    for detect_time in detected:
-        count = 0
-        for bounds in ground_truth:
-            if detect_time >= bounds[0] and detect_time <= bounds[1]:
-                break
-            count += 1
-        if count == len(ground_truth):
-            false_positive_timestamps[detect_time] = None
+    ground_truth = sorted(ground_truth, key=lambda x: x[0])
+    
+    def is_false_positive(detect_time):
+        return not any(bounds[0] <= detect_time <= bounds[1] for bounds in ground_truth)
+    
+    false_positive_timestamps = {detect_time: None for detect_time in detected if is_false_positive(detect_time)}
+    
     return false_positive_timestamps
 
 class Results(dict):
