@@ -1,5 +1,7 @@
 from open_ephys.analysis import formats
 
+from Plotter import SummaryPlot
+
 import sys
 import argparse
 
@@ -18,7 +20,7 @@ import bisect
 PLOT_SUMMARY                            = False
 PLOT_FIRST_N_GROUND_TRUTH               = False
 PLOT_FIRST_N_TRUE_POSITIVE              = True
-PLOT_FIRST_N_FALSE_POSITIVE             = False
+PLOT_FIRST_N_FALSE_POSITIVE             = True
 PLOT_TRUE_VS_FALSE_POSITIVE             = False
 
 #Find all detected ripple events that are stricly contained within bounds of a manually labeled event
@@ -87,10 +89,8 @@ def run(params):
             cnn_input_channels = [i - 1 for i in recording.cnn_input_channels]
             # Use the mean ripple duration as the threshold for predicting events
             pred_threshold = recording.mean_ripple_duration_ms
-            print("Loaded Prida data")
         else:
             recording = formats.BinaryRecording(data_path)
-            print("Loaded Replay data")
 
         # Get the sample rate 
         sample_rate = recording.continuous[0].metadata['sample_rate']
@@ -119,32 +119,25 @@ def run(params):
     PLOT = params['show']
     if PLOT:
 
-        pr = recordings[0]
-        oe = recordings[1]
+        prida = recordings[0]
+        local = recordings[1]
 
-        raw = pr.continuous[0].samples
-        prida_events = pr.events
-        filtered = oe.continuous[0].samples
-        replay_events = oe.events
+        raw = prida.continuous[0].samples
+        filtered = local.continuous[0].samples
+
+        all_events = prida.detected_events.sample_number
 
         if PLOT_SUMMARY:
-            down_sample_factor = 10000
-            samples = raw + np.arange(raw.shape[1]) * 500
-            plt.plot(samples[::down_sample_factor,cnn_input_channels],color='0.5')
-            if recording.events is not None:
-                [plt.axvline(event_sample_number/down_sample_factor, 
-                            color='b', linestyle='-', linewidth=1) for event_sample_number in recording.events.sample_number]
-            if labeled_bounds is not None:
-                [plt.axvline(int(event_sample_number/down_sample_factor),
-                            color='r', linestyle='-', linewidth=1) for event_sample_number in [ int(np.mean([a,b])*sample_rate) for a,b in labeled_bounds]]
-            if recording.detected_events_within_manual_events is not None:
-                [plt.axvline(int(sample_rate*event_sample_number)/down_sample_factor,
-                            color='g', linestyle='-', linewidth=1) for event_sample_number in recording.detected_events_within_manual_events]
-            if recording.detected_events_within_pred_threshold is not None:
-                [plt.axvline(int(sample_rate*event_sample_number)/down_sample_factor,
-                            color='g', linestyle='-', linewidth=1) for event_sample_number in recording.detected_events_within_pred_threshold]
-            plt.axis('off')
-            plt.show()
+            sp = SummaryPlot(
+                data = filtered[:,cnn_input_channels],
+                detected = all_events,
+                ground_truth = [ int(np.mean([start,stop])*sample_rate) for start,stop in labeled_bounds],
+                true_positives = [ key*sample_rate for key in prida.detected_events_within_manual_events.keys() ],
+                false_positives = [ key*sample_rate for key in prida.detected_events_not_within_manual_events.keys() ],
+                down_sample_factor = 10000
+            )
+
+        #TODO: Move the rest of these plots into Plotter class
 
         if PLOT_FIRST_N_GROUND_TRUTH:
             N = 16
@@ -178,13 +171,13 @@ def run(params):
             num_rows = int(np.ceil(np.sqrt(N)))
             num_cols = int(np.ceil(N/num_rows))
             fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
-            true_positives = list(pr.detected_events_within_manual_events.keys())
+            true_positives = list(prida.detected_events_within_manual_events.keys())
             for idx, ax in enumerate(axes.flatten()):
                 offset = 0
                 event_sample_number = int(sample_rate*true_positives[offset+idx])
                 ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='green')
                 ax.axvline(window_size_in_samples, color='k', linestyle='-', linewidth=2)
-                bounds = pr.detected_events_within_manual_events[true_positives[offset+idx]]
+                bounds = prida.detected_events_within_manual_events[true_positives[offset+idx]]
                 x1 = int((bounds[0] - event_sample_number/sample_rate) * sample_rate / down_sample_factor) + window_size_in_samples
                 x2 = int((bounds[1] - event_sample_number/sample_rate) * sample_rate / down_sample_factor) + window_size_in_samples
                 ax.axvspan(x1, x2, facecolor='lightgray', alpha=0.5)
@@ -202,7 +195,7 @@ def run(params):
             num_rows = int(np.ceil(np.sqrt(N)))
             num_cols = int(np.ceil(N/num_rows))
             fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
-            false_positives = list(pr.detected_events_not_within_manual_events.keys())
+            false_positives = list(prida.detected_events_not_within_manual_events.keys())
             for idx, ax in enumerate(axes.flatten()):
                 offset = 0
                 event_sample_number = int(sample_rate*false_positives[offset+idx])
@@ -210,33 +203,6 @@ def run(params):
                 ax.axvline(window_size_in_samples, color='k', linestyle='-', linewidth=2)
                 ax.axis('off')
                 ax.title.set_text(round(event_sample_number/sample_rate,2))
-            plt.show()
-
-        if PLOT_TRUE_VS_FALSE_POSITIVE:
-            N = 16
-            down_sample_factor = 1
-            window_size_in_ms = 120 / down_sample_factor
-            window_size_in_samples = int(window_size_in_ms * sample_rate / 1000 / 2)
-            samples = filtered + np.arange(filtered.shape[1]) * 300
-            #Create a sublplot for each event such that the resulting figure has roughly square plots
-            num_rows = int(np.ceil(np.sqrt(N)))
-            num_cols = int(np.ceil(N/num_rows))
-            fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*3,num_rows*3))
-            gt_events = list(recording.detected_events_within_manual_events.keys())
-            true_positives = list(recording.detected_events_within_manual_events.keys())
-            print(true_positives)
-            false_positives = list(recording.detected_events_not_within_manual_events.keys())
-            print(false_positives)
-            for idx, ax in enumerate(axes.flatten()):
-                if idx < N / 2:
-                    event_sample_number = int(sample_rate*true_positives[idx])
-                    ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='royalblue')
-                else:
-                    event_sample_number = int(sample_rate*false_positives[int(idx - N / 2)])
-                    ax.plot(samples[event_sample_number-window_size_in_samples:event_sample_number+window_size_in_samples:down_sample_factor,cnn_input_channels], color='red')
-                ax.axvline(window_size_in_samples, color='grey', linestyle='-', linewidth=1)
-                ax.title.set_text(round(event_sample_number/sample_rate,2))
-                ax.axis('off')
             plt.show()
 
     return results

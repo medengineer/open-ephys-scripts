@@ -2,9 +2,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-import math
-
 from matplotlib import gridspec
+
+class SummaryPlot:
+
+    def __init__(self, data, detected, ground_truth, true_positives, false_positives, down_sample_factor=10000):
+
+        plt.plot(data[::down_sample_factor],color='0.5')
+
+        if detected is not None:
+            [plt.axvline(sample_number/down_sample_factor, color='b', linestyle='-', linewidth=1) for sample_number in detected]
+
+        if ground_truth is not None:
+            [plt.axvline(sample_number/down_sample_factor, color='r', linestyle='-', linewidth=1) for sample_number in ground_truth]
+
+        if true_positives is not None:
+            [plt.axvline(sample_number/down_sample_factor, color='g', linestyle='-', linewidth=1) for sample_number in true_positives]
+
+        if false_positives is not None:
+            [plt.axvline(sample_number/down_sample_factor, color='g', linestyle='-', linewidth=1) for sample_number in false_positives]
+
+        plt.axis('off')
+        plt.show()
+
+
 class RipplePlot:
 
     def __init__(self, axes_handle):
@@ -23,18 +44,18 @@ class RipplePlot:
             self.ax.plot(x, y, z)
             self.ax.axis('off')
 
-N = 8
-cols = 4
-rows = int(math.ceil(N / cols))
+# N = 8
+# cols = 4
+# rows = int(math.ceil(N / cols))
 
-gs = gridspec.GridSpec(rows, cols)
-fig = plt.figure()
-for n in range(N):
-    ax = fig.add_subplot(gs[n], projection='3d')
-    RipplePlot(ax)
+# gs = gridspec.GridSpec(rows, cols)
+# fig = plt.figure()
+# for n in range(N):
+#     ax = fig.add_subplot(gs[n], projection='3d')
+#     RipplePlot(ax)
 
-fig.tight_layout()
-plt.show()
+# fig.tight_layout()
+# plt.show()
 
 #TODO Refactor the below from main script
 '''
